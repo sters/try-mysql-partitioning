@@ -3,25 +3,19 @@ FROM golang:1.21-alpine AS builder
 
 WORKDIR /build
 
-# Copy go mod files
-COPY go.mod go.sum ./
-RUN go mod download
+# Copy everything including vendor directory
+COPY . .
 
-# Copy source code
-COPY app/ ./app/
-
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o app ./app/main.go
+# Build the application using vendored dependencies
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o /app ./app/main.go
 
 # Runtime stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
-
 WORKDIR /root/
 
 # Copy the binary from builder
-COPY --from=builder /build/app .
+COPY --from=builder /app .
 
 EXPOSE 8080
 

@@ -14,9 +14,6 @@
 # Go workspace file
 go.work
 
-# Dependency directories
-vendor/
-
 # Build output
 app/app
 bin/
