@@ -150,3 +150,38 @@ JOIN authors a ON b.author_id = a.id;
 パーティション数は 8〜100 が最適
 パーティションキーでの検索のみ高速化される
 ```
+
+---
+
+## EXPLAIN で見るべきポイント
+
+### パーティションプルーニングの確認
+```sql
+EXPLAIN SELECT * FROM books_part WHERE created_at = '2022-06-15';
+```
+```
+partitions: p2022  -- ← 単一パーティションのみ = 良好
+```
+
+### 全パーティションスキャンの検出
+```sql
+EXPLAIN SELECT * FROM books_hash WHERE created_at = '2022-06-15';
+```
+```
+partitions: p0,p1,p2,p3,p4,p5,p6,p7  -- ← 全パーティション = 要注意
+```
+
+### インデックス使用の確認
+```
+type: const/ref/range  -- ← インデックス使用
+type: ALL/index        -- ← フルスキャン（要改善）
+Extra: Using index     -- ← カバリングインデックス（最良）
+```
+
+### 重要な指標
+| EXPLAIN 項目 | 良好な値 | 要注意な値 |
+|-------------|---------|-----------|
+| partitions | 単一または少数 | 全パーティション |
+| type | const, ref, range | ALL, index |
+| rows | 予想行数が妥当 | 全件に近い |
+| Extra | Using index | Using filesort |

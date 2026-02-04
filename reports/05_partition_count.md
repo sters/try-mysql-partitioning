@@ -26,6 +26,13 @@ MySQL のパーティション上限は **8,192** 個。
 
 ## 1. PK検索（単一行）
 
+### クエリ
+```sql
+SELECT * FROM books_hash_{N} WHERE id = 500000;
+```
+
+### 結果
+
 | パーティション数 | 初回 | キャッシュ後 |
 |-----------------|------|-------------|
 | なし | 835µs | 365µs |
@@ -33,6 +40,32 @@ MySQL のパーティション上限は **8,192** 個。
 | 100 | 1.1ms | **244µs** |
 | 1,000 | 2.3ms | **237µs** |
 | **8,000** | **11.2ms** | **516µs** |
+
+### EXPLAIN 分析
+
+#### 8 パーティション
+```sql
+EXPLAIN SELECT * FROM books_hash_8 WHERE id = 500000;
+```
+```
+type: const
+partitions: p0
+key: PRIMARY
+rows: 1
+```
+**考察**: 単一パーティションのみアクセス。パーティション特定のオーバーヘッドは最小限。
+
+#### 8000 パーティション
+```sql
+EXPLAIN SELECT * FROM books_hash_8000 WHERE id = 500000;
+```
+```
+type: const
+partitions: p4000
+key: PRIMARY
+rows: 1
+```
+**考察**: EXPLAIN 上は単一パーティションだが、**8000パーティションのメタデータ管理オーバーヘッド**が発生。初回アクセスで11.2msもかかる原因。
 
 ### 分析
 - 8〜1000: キャッシュ後は高速
@@ -43,11 +76,44 @@ MySQL のパーティション上限は **8,192** 個。
 
 ## 2. ID範囲検索（10,001行）
 
+### クエリ
+```sql
+SELECT COUNT(*) FROM books_hash_{N} WHERE id BETWEEN 100000 AND 110000;
+```
+
+### 結果
+
 | パーティション数 | 時間 | 比較 |
 |-----------------|------|------|
 | 100 | **9.9ms** | baseline |
 | 1,000 | 25.3ms | 2.5倍遅い |
 | **8,000** | **1.1秒** | **111倍遅い** |
+
+### EXPLAIN 分析
+
+#### 100 パーティション
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_hash_100 WHERE id BETWEEN 100000 AND 110000;
+```
+```
+type: range
+partitions: p0,p1,p2,...,p99
+key: PRIMARY
+rows: 10001
+```
+**考察**: 100パーティション全てをスキャン。各パーティションで少量のデータを検索。
+
+#### 8000 パーティション
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_hash_8000 WHERE id BETWEEN 100000 AND 110000;
+```
+```
+type: range
+partitions: p0,p1,p2,...,p7999
+key: PRIMARY
+rows: 10001
+```
+**考察**: **8000パーティション全てをスキャン**。パーティションごとのオープン/クローズのオーバーヘッドが累積し、111倍の遅延。
 
 ### 分析
 - **8000パーティションは壊滅的に遅い**
@@ -58,6 +124,14 @@ MySQL のパーティション上限は **8,192** 個。
 
 ## 3. 日付範囲検索（16,041行）
 
+### クエリ
+```sql
+SELECT COUNT(*) FROM books_hash_{N}
+WHERE created_at BETWEEN '2022-06-01' AND '2022-06-30';
+```
+
+### 結果
+
 | パーティション数 | 時間 | 比較 |
 |-----------------|------|------|
 | なし | 8.3ms | baseline |
@@ -65,6 +139,35 @@ MySQL のパーティション上限は **8,192** 個。
 | 100 | 15.5ms | 5倍遅い |
 | 1,000 | 21.6ms | 7倍遅い |
 | **8,000** | **944ms** | **304倍遅い** |
+
+### EXPLAIN 分析
+
+#### 8 パーティション
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_hash_8
+WHERE created_at BETWEEN '2022-06-01' AND '2022-06-30';
+```
+```
+type: range
+partitions: p0,p1,p2,p3,p4,p5,p6,p7
+key: idx_created_at
+rows: 16041
+Extra: Using where; Using index
+```
+**考察**: 8パーティション全スキャンだが、オーバーヘッドが小さい。インデックスで効率的に絞り込み。
+
+#### 8000 パーティション
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_hash_8000
+WHERE created_at BETWEEN '2022-06-01' AND '2022-06-30';
+```
+```
+type: range
+partitions: p0,p1,p2,...,p7999
+key: idx_created_at
+rows: 16041
+```
+**考察**: **8000パーティション全てを開いてインデックススキャン**。各パーティションに平均2行しかないが、オープン/クローズコストが304倍の遅延を引き起こす。
 
 ### 分析
 - **8パーティションが最速**
