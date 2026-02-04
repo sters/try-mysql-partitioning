@@ -38,6 +38,33 @@ go run ./cmd/benchmark
 go run ./cmd/benchmark -explain -iterations 20
 ```
 
+## パーティション比較
+
+パーティションの有無でパフォーマンスを比較するスクリプト。
+
+```bash
+# HASH パーティションで比較（パーティションテーブルを自動作成）
+go run ./cmd/compare -type hash -setup
+
+# RANGE (年) パーティションで比較
+go run ./cmd/compare -type range_year -setup
+
+# RANGE (ID) パーティションで比較
+go run ./cmd/compare -type range_id -setup
+
+# LIST パーティションで比較
+go run ./cmd/compare -type list -setup
+
+# KEY パーティションで比較
+go run ./cmd/compare -type key -setup
+
+# 全パーティション種類で比較
+go run ./cmd/compare -type all -setup -iterations 20
+
+# パーティションテーブルが既にある場合は -setup 不要
+go run ./cmd/compare -type hash -iterations 20
+```
+
 ## パーティション適用
 
 ```bash
