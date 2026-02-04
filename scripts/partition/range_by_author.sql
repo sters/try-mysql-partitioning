@@ -1,0 +1,70 @@
+-- RANGE Partition by author_id (Foreign Key)
+-- 外部キー参照カラムでのRANGEパーティション分割
+
+DROP TABLE IF EXISTS books_range_author;
+
+CREATE TABLE books_range_author (
+    id BIGINT AUTO_INCREMENT,
+    title VARCHAR(255) NOT NULL,
+    author_id BIGINT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, author_id),
+    INDEX idx_author_id (author_id),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY RANGE (author_id) (
+    PARTITION p0 VALUES LESS THAN (1000),
+    PARTITION p1 VALUES LESS THAN (2000),
+    PARTITION p2 VALUES LESS THAN (3000),
+    PARTITION p3 VALUES LESS THAN (4000),
+    PARTITION p4 VALUES LESS THAN (5000),
+    PARTITION p5 VALUES LESS THAN (6000),
+    PARTITION p6 VALUES LESS THAN (7000),
+    PARTITION p7 VALUES LESS THAN (8000),
+    PARTITION p8 VALUES LESS THAN (9000),
+    PARTITION p9 VALUES LESS THAN (10000),
+    PARTITION pmax VALUES LESS THAN MAXVALUE
+);
+
+-- 既存データのコピー
+INSERT INTO books_range_author (id, title, author_id, created_at)
+SELECT id, title, author_id, created_at FROM books;
+
+-- book_tags も book_id の RANGE パーティション
+DROP TABLE IF EXISTS book_tags_range_bookid;
+
+CREATE TABLE book_tags_range_bookid (
+    book_id BIGINT NOT NULL,
+    tag_id BIGINT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (book_id, tag_id),
+    INDEX idx_tag_id (tag_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY RANGE (book_id) (
+    PARTITION p0 VALUES LESS THAN (100000),
+    PARTITION p1 VALUES LESS THAN (200000),
+    PARTITION p2 VALUES LESS THAN (300000),
+    PARTITION p3 VALUES LESS THAN (400000),
+    PARTITION p4 VALUES LESS THAN (500000),
+    PARTITION p5 VALUES LESS THAN (600000),
+    PARTITION p6 VALUES LESS THAN (700000),
+    PARTITION p7 VALUES LESS THAN (800000),
+    PARTITION p8 VALUES LESS THAN (900000),
+    PARTITION p9 VALUES LESS THAN (1000000),
+    PARTITION pmax VALUES LESS THAN MAXVALUE
+);
+
+INSERT INTO book_tags_range_bookid (book_id, tag_id, created_at)
+SELECT book_id, tag_id, created_at FROM book_tags;
+
+-- パーティション情報確認
+SELECT
+    TABLE_NAME,
+    PARTITION_NAME,
+    PARTITION_METHOD,
+    PARTITION_EXPRESSION,
+    TABLE_ROWS
+FROM INFORMATION_SCHEMA.PARTITIONS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME IN ('books_range_author', 'book_tags_range_bookid')
+ORDER BY TABLE_NAME, PARTITION_ORDINAL_POSITION;

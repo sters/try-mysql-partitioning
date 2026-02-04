@@ -10,6 +10,12 @@ DROP TABLE IF EXISTS books_hash;
 DROP TABLE IF EXISTS authors_hash;
 DROP TABLE IF EXISTS book_tags_hash;
 
+DROP TABLE IF EXISTS books_hash_author;
+DROP TABLE IF EXISTS book_tags_hash_bookid;
+
+DROP TABLE IF EXISTS books_range_author;
+DROP TABLE IF EXISTS book_tags_range_bookid;
+
 DROP TABLE IF EXISTS books_list;
 DROP TABLE IF EXISTS author_tags_list;
 
