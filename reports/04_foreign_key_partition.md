@@ -68,6 +68,21 @@ Extra: Using index
 - **HASH が最速**: パーティションプルーニングが効く
 - RANGE は不向き: author_id の分布が偏ると効果が薄い
 
+### なぜ RANGE が遅いのか？
+
+RANGE(author_id) で単一著者検索が 487% 遅い理由:
+
+1. **パーティションサイズの問題**: RANGE(0-10000, 10000-20000, ...) では、p0 に author_id 0-9999 の**全ての本**が格納される
+2. **データの偏り**: 1パーティション = 10万レコード。単一 author_id の検索でも、パーティション全体のメタデータにアクセス
+3. **オーバーヘッド**: HASH は author_id を直接ハッシュ化するため、ピンポイントでパーティションを特定できる
+
+```
+HASH: author_id=500 → HASH(500) → p3 のみ（高速）
+RANGE: author_id=500 → p0 の中から検索（オーバーヘッド発生）
+```
+
+**結論**: 単一値検索では HASH、範囲検索では RANGE を使い分けるべき
+
 ---
 
 ## 2. 著者範囲検索（1000人分）
@@ -176,14 +191,70 @@ type: ref, key: idx_author_id, rows: 91
 
 ## 4. 大量データでの検証（10,000,000件）
 
+### クエリ
+
+#### 単一著者検索
+```sql
+SELECT COUNT(*) FROM {table} WHERE author_id = 5000;
+```
+
+#### 範囲検索
+```sql
+SELECT COUNT(*) FROM {table} WHERE author_id BETWEEN 5000 AND 6000;
+```
+
+### 結果
+
 | クエリ | パーティションなし | HASH | RANGE |
 |-------|------------------|------|-------|
 | 単一著者 | 1.1ms | - | **0.2ms** |
 | 範囲検索 | 5.4ms | - | **0.3ms** |
 
+### EXPLAIN 分析
+
+#### パーティションなし（単一著者）
+```sql
+EXPLAIN SELECT COUNT(*) FROM books WHERE author_id = 5000;
+```
+```
+type: ref
+key: idx_author_id
+rows: 1000
+Extra: Using index
+```
+**考察**: インデックスで検索。10M件中の約1000件にアクセス。
+
+#### RANGE パーティション（単一著者）
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_author WHERE author_id = 5000;
+```
+```
+type: ref
+partitions: p0
+key: idx_author_id
+rows: 1000
+Extra: Using index
+```
+**考察**: パーティションプルーニングにより p0（0-10000範囲）のみアクセス。インデックスも活用され、1/10のデータから検索するため**5.5倍高速**。
+
+#### RANGE パーティション（範囲検索）
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_author WHERE author_id BETWEEN 5000 AND 6000;
+```
+```
+type: range
+partitions: p0
+key: idx_author_id
+rows: 100000
+Extra: Using where; Using index
+```
+**考察**: 範囲 5000-6000 が p0 に完全に収まる。単一パーティション内でインデックス範囲スキャン。**18倍高速**。
+
 ### 分析
 - 大量データでは RANGE の効果が顕著
 - 10倍以上の高速化
+- **スケーラビリティ**: データ量が増えるほどパーティションプルーニングの効果が高まる
+- **理由**: パーティションにより検索対象データが物理的に分離されているため、I/O が大幅に削減される
 
 ---
 

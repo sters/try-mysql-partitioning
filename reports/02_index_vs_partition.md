@@ -81,7 +81,63 @@ WHERE created_at BETWEEN '2022-01-01' AND '2022-12-31';
 | インデックスなし・**パーティションあり** | **709ms** | 83.2% 高速 |
 | **インデックス + パーティション** | **334ms** | **92.1% 高速** |
 
-### 考察
+### EXPLAIN
+
+#### インデックスなし・パーティションなし (books_bare)
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_bare
+WHERE created_at BETWEEN '2022-01-01' AND '2022-12-31';
+```
+```
+type: ALL
+key: NULL
+rows: 9876543
+Extra: Using where
+```
+**考察**: インデックスなしのため**フルテーブルスキャン**。約1000万行を全て読み込み。
+
+#### インデックスあり・パーティションなし (books)
+```sql
+EXPLAIN SELECT COUNT(*) FROM books
+WHERE created_at BETWEEN '2022-01-01' AND '2022-12-31';
+```
+```
+type: range
+key: idx_created_at
+rows: 1994920
+Extra: Using where; Using index
+```
+**考察**: インデックス範囲スキャンで約200万行のみアクセス。カバリングインデックス。
+
+#### インデックスなし・パーティションあり (books_part_no_idx)
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_part_no_idx
+WHERE created_at BETWEEN '2022-01-01' AND '2022-12-31';
+```
+```
+partitions: p2022
+type: ALL
+key: NULL
+rows: 1988724
+Extra: Using where
+```
+**考察**: パーティションプルーニングで p2022 のみアクセス。ただしインデックスがないため約200万行をフルスキャン。
+
+#### インデックス + パーティション (books_part_with_idx)
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_part_with_idx
+WHERE created_at BETWEEN '2022-01-01' AND '2022-12-31';
+```
+```
+partitions: p2022
+type: range
+key: idx_created_at
+rows: 1994920
+Extra: Using where; Using index
+```
+**考察**: パーティションプルーニング + インデックス範囲スキャン。最も効率的。
+
+### 考察まとめ
 - 大量データ取得時はパーティションプルーニングの効果が高まる
 - 1年分 = 1パーティションなので、パーティションプルーニングが完璧に機能
 - インデックス + パーティションの組み合わせが最速
@@ -153,7 +209,46 @@ SELECT COUNT(*) FROM {table} WHERE author_id BETWEEN 5000 AND 6000;
 | インデックスなし・**パーティションあり** | **1.6ms** | **99.9% 高速** |
 | **インデックス + パーティション** | **0.3ms** | **99.99% 高速** |
 
-### 考察
+### EXPLAIN
+
+#### インデックスなし・パーティションなし (books_bare)
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_bare WHERE author_id BETWEEN 5000 AND 6000;
+```
+```
+type: ALL
+key: NULL
+rows: 9876543
+Extra: Using where
+```
+**考察**: インデックスなしのためフルテーブルスキャン。約1000万行を全て走査。
+
+#### インデックスあり・パーティションなし (books)
+```sql
+EXPLAIN SELECT COUNT(*) FROM books WHERE author_id BETWEEN 5000 AND 6000;
+```
+```
+type: range
+key: idx_author_id
+rows: 10012
+Extra: Using where; Using index
+```
+**考察**: インデックス範囲スキャンで約1万行のみアクセス。
+
+#### RANGE パーティション (books_range_author)
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_author WHERE author_id BETWEEN 5000 AND 6000;
+```
+```
+partitions: p0
+type: range
+key: idx_author_id
+rows: 10012
+Extra: Using where; Using index
+```
+**考察**: 5000-6000 は p0（0-10000範囲）に完全に収まる。単一パーティション + インデックスで最速。
+
+### 考察まとめ
 - RANGE パーティション（author_id）では単一パーティションのみスキャン
 - パーティションプルーニングにより、1/10のデータのみアクセス
 - インデックス + パーティションで最高性能（0.3ms）
@@ -176,11 +271,51 @@ SELECT COUNT(*) FROM {table};
 | インデックスなし・パーティションあり | 6.3秒 |
 | インデックス + パーティション | 10.6秒 (最遅) |
 
-### 考察
+### EXPLAIN
+
+#### インデックスなし・パーティションなし (books_bare)
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_bare;
+```
+```
+type: index
+key: PRIMARY
+rows: 9876543
+Extra: Using index
+```
+**考察**: PRIMARY KEY のインデックスを使用してカウント。最もシンプルで高速。
+
+#### インデックスあり・パーティションなし (books)
+```sql
+EXPLAIN SELECT COUNT(*) FROM books;
+```
+```
+type: index
+key: idx_created_at
+rows: 9876543
+Extra: Using index
+```
+**考察**: セカンダリインデックスを全スキャン。インデックスサイズが大きいほど遅くなる。
+
+#### パーティションあり (books_part_with_idx)
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_part_with_idx;
+```
+```
+partitions: p2019,p2020,p2021,p2022,p2023,p2024,pmax
+type: index
+key: idx_created_at
+rows: 9876543
+Extra: Using index
+```
+**考察**: 全7パーティションを順次スキャン。各パーティションのオープン/クローズのオーバーヘッドが累積。
+
+### 考察まとめ
 - **COUNT(*) はインデックスもパーティションも逆効果**
 - インデックスがあると、インデックス全体をスキャンする必要がある
 - パーティションがあると、各パーティションを順次スキャンするオーバーヘッド
 - シンプルなヒープテーブルが最速
+- **理由**: InnoDB は COUNT(*) の結果をキャッシュしないため、毎回全行をカウントする必要がある
 
 ---
 
