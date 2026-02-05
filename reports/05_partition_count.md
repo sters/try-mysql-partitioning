@@ -345,6 +345,30 @@ SELECT * FROM books_range_{N} WHERE id = 500000;
 
 **考察**: RANGE でも HASH 同様、8000パーティションの初回アクセスが極めて遅い（83ms）。ただしキャッシュ後は差が縮まる。
 
+#### EXPLAIN
+
+```sql
+EXPLAIN SELECT * FROM books_range_8 WHERE id = 500000;
+```
+```
+partitions: p4
+type: const
+key: PRIMARY
+rows: 1
+```
+
+```sql
+EXPLAIN SELECT * FROM books_range_8000 WHERE id = 500000;
+```
+```
+partitions: p4000
+type: const
+key: PRIMARY
+rows: 1
+```
+
+**考察**: どちらも単一パーティションのみアクセス。EXPLAIN上は同じだが、8000パーティションではメタデータ管理のオーバーヘッドで初回83msかかる。
+
 ---
 
 ### 8. RANGE: ID範囲検索（パーティション内）
@@ -362,6 +386,32 @@ SELECT COUNT(*) FROM books_range_{N} WHERE id BETWEEN 100000 AND 110000;
 
 **考察**: RANGE の大きなメリットは**パーティションプルーニング**。8パーティションでは p0 のみアクセスで最速。HASH では全パーティションスキャンが必要だったが、RANGE では該当パーティションのみアクセス。
 
+#### EXPLAIN
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_8 WHERE id BETWEEN 100000 AND 110000;
+```
+```
+partitions: p0
+type: range
+key: PRIMARY
+rows: 19300
+Extra: Using where; Using index
+```
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_8000 WHERE id BETWEEN 100000 AND 110000;
+```
+```
+partitions: p800,p801,p802,...,p880 (81パーティション)
+type: range
+key: PRIMARY
+rows: 10001
+Extra: Using where; Using index
+```
+
+**考察**: 8パーティションでは p0 のみ、8000パーティションでは81パーティションにアクセス。HASH(全8000パーティション)と比較して大幅にアクセス範囲が限定される。
+
 ---
 
 ### 9. RANGE: ID範囲検索（パーティション跨ぎ）
@@ -378,6 +428,32 @@ SELECT COUNT(*) FROM books_range_{N} WHERE id BETWEEN 120000 AND 130000;
 | **8,000** | **50.8ms** | 81 |
 
 **考察**: パーティション境界をまたぐ検索でも、RANGE はアクセス範囲が限定される。8000パーティションでも81パーティションのみアクセス（HASH の全8000パーティションスキャンと比較して大幅に高速）。
+
+#### EXPLAIN
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_8 WHERE id BETWEEN 120000 AND 130000;
+```
+```
+partitions: p0,p1
+type: range
+key: PRIMARY
+rows: 19390
+Extra: Using where; Using index
+```
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_8000 WHERE id BETWEEN 120000 AND 130000;
+```
+```
+partitions: p960,p961,...,p1040 (81パーティション)
+type: range
+key: PRIMARY
+rows: 10001
+Extra: Using where; Using index
+```
+
+**考察**: 境界をまたぐ場合でも、8パーティションでは2パーティション、8000パーティションでは81パーティションのみ。
 
 ---
 
@@ -397,6 +473,34 @@ WHERE created_at BETWEEN '2022-06-01' AND '2022-06-30';
 
 **考察**: パーティションキー以外（created_at）での検索は全パーティションスキャン。HASH と同様の傾向だが、HASH(944ms) より RANGE(204.8ms) の方が高速。
 
+#### EXPLAIN
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_8
+WHERE created_at BETWEEN '2022-06-01' AND '2022-06-30';
+```
+```
+partitions: p0,p1,p2,p3,p4,p5,p6,p7 (全8パーティション)
+type: range
+key: idx_created_at
+rows: 16122
+Extra: Using where; Using index
+```
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_8000
+WHERE created_at BETWEEN '2022-06-01' AND '2022-06-30';
+```
+```
+partitions: p0,p1,p2,...,p7999 (全8000パーティション)
+type: range
+key: idx_created_at
+rows: 16122
+Extra: Using where; Using index
+```
+
+**考察**: パーティションキー以外での検索は**全パーティションスキャン**。パーティションプルーニングが効かないため、パーティション数に比例して遅くなる。
+
 ---
 
 ### 11. RANGE: Full COUNT
@@ -414,6 +518,32 @@ SELECT COUNT(*) FROM books_range_{N};
 
 **考察**: 意外にも8000パーティションが最速。理由は不明だが、RANGE パーティションでは各パーティションの COUNT が効率的に処理される可能性がある。
 
+#### EXPLAIN
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_8;
+```
+```
+partitions: p0,p1,p2,p3,p4,p5,p6,p7 (全8パーティション)
+type: index
+key: idx_created_at
+rows: 1000000
+Extra: Using index
+```
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_8000;
+```
+```
+partitions: p0,p1,p2,...,p7999 (全8000パーティション)
+type: index
+key: idx_created_at
+rows: 1000000
+Extra: Using index
+```
+
+**考察**: EXPLAIN上は同じだが、実行時間は8000パーティションが最速（127.5ms）。測定誤差か、または各パーティションが小さいため効率的にカウントされる可能性。
+
 ---
 
 ### 12. RANGE: author_id検索（セカンダリインデックス）
@@ -430,6 +560,32 @@ SELECT COUNT(*) FROM books_range_{N} WHERE author_id = 5000;
 | **8,000** | **1,657.6ms** | **212倍遅い** |
 
 **考察**: パーティションキー以外での検索は壊滅的。8000パーティションでは約1.7秒かかる。全パーティションのセカンダリインデックスを順次スキャンするため。
+
+#### EXPLAIN
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_8 WHERE author_id = 5000;
+```
+```
+partitions: p0,p1,p2,p3,p4,p5,p6,p7 (全8パーティション)
+type: ref
+key: idx_author_id
+rows: 115
+Extra: Using index
+```
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM books_range_8000 WHERE author_id = 5000;
+```
+```
+partitions: p0,p1,p2,...,p7999 (全8000パーティション)
+type: ref
+key: idx_author_id
+rows: 115
+Extra: Using index
+```
+
+**考察**: rows=115 で同じだが、8000パーティション全てのセカンダリインデックスを開いて検索するため、8パーティション(7.8ms)と比較して**212倍遅い(1.66秒)**。
 
 ---
 
